@@ -6,6 +6,6 @@ ipython
 opencv-python
 pillow
 pywget
-streamlit
-torch==2.1.0
+streamlit>=1.37,<2
+torch>=2.1.0,<3
 watchdog
