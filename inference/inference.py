@@ -28,6 +28,7 @@ def model_fn(model_dir):
 def predict_fn(data, pipe):
     # get image and inference parameters
     # https://github.com/huggingface/diffusers/blob/ae05050db9d37d5af48a6cd0d6510a5ffb1c1cd4/src/diffusers/pipelines/stable_video_diffusion/pipeline_stable_video_diffusion.py#L339
+    movie_title = data.pop("movie_title")
     image = data.pop("image")
     width = data.pop("width", 1024)
     height = data.pop("height", 576)
@@ -42,6 +43,7 @@ def predict_fn(data, pipe):
     seed = data.pop("seed", 42)
 
     if image.startswith(BASE64_PREFIX):
+        # load image from base64-encoded data URI
         image = image.removeprefix(BASE64_PREFIX)
         with BytesIO(base64.b64decode(image)) as buffered:
             image = Image.open(buffered).copy()
@@ -76,4 +78,20 @@ def predict_fn(data, pipe):
             encoded_frames.append(base64.b64encode(buffered.getvalue()).decode())
 
     # return response
-    return {"frames": encoded_frames}
+    return {
+        "frames": encoded_frames,
+        "config": {
+            "movie_title": movie_title,
+            "width": width,
+            "height": height,
+            "num_frames": num_frames,
+            "num_inference_steps": num_inference_steps,
+            "min_guidance_scale": min_guidance_scale,
+            "max_guidance_scale": max_guidance_scale,
+            "fps": fps,
+            "motion_bucket_id": motion_bucket_id,
+            "noise_aug_strength": noise_aug_strength,
+            "decode_chunk_size": decode_chunk_size,
+            "seed": seed,
+        }
+    }
