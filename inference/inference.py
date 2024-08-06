@@ -5,16 +5,12 @@ from PIL import Image
 
 import torch
 from diffusers import StableVideoDiffusionPipeline
+from diffusers.utils import load_image
 
-
-# Author: Gary A. Stafford
-# Purpose: Custom SageMaker inference script for SVD-XT 1.1 model: accepts base64 encoded image for conditioning image
-# Date: 2024-05-09
-# License: MIT License
-# Available parameters: https://github.com/huggingface/diffusers/blob/ae05050db9d37d5af48a6cd0d6510a5ffb1c1cd4/src/diffusers/pipelines/stable_video_diffusion/pipeline_stable_video_diffusion.py#L339
 
 logger = logging.getLogger(__name__)
 
+BASE64_PREFIX = "data:text/plain;base64,"
 
 def model_fn(model_dir):
     logger.info(f"model_dir: {model_dir}")
@@ -30,10 +26,9 @@ def model_fn(model_dir):
 
 
 def predict_fn(data, pipe):
-    # logger.info(f"data: {data}")
-
     # get image and inference parameters
-    image_raw = data.pop("image")
+    # https://github.com/huggingface/diffusers/blob/ae05050db9d37d5af48a6cd0d6510a5ffb1c1cd4/src/diffusers/pipelines/stable_video_diffusion/pipeline_stable_video_diffusion.py#L339
+    image = data.pop("image")
     width = data.pop("width", 1024)
     height = data.pop("height", 576)
     num_frames = data.pop("num_frames", 25)
@@ -46,7 +41,13 @@ def predict_fn(data, pipe):
     decode_chunk_size = data.pop("decode_chunk_size", 8)
     seed = data.pop("seed", 42)
 
-    image = Image.open(BytesIO(base64.b64decode(image_raw)))
+    if image.startswith(BASE64_PREFIX):
+        image = image.removeprefix(BASE64_PREFIX)
+        with BytesIO(base64.b64decode(image)) as buffered:
+            image = Image.open(buffered).copy()
+    else:
+        image = load_image(image).copy()
+
     image = image.resize((width, height))
 
     generator = torch.manual_seed(seed)
@@ -70,9 +71,9 @@ def predict_fn(data, pipe):
     # create response
     encoded_frames = []
     for frame in frames:
-        buffered = BytesIO()
-        frame.save(buffered, format="JPEG", quality=95, subsampling=0)
-        encoded_frames.append(base64.b64encode(buffered.getvalue()).decode())
+        with BytesIO() as buffered:
+            frame.save(buffered, format="JPEG", quality=95, subsampling=0)
+            encoded_frames.append(base64.b64encode(buffered.getvalue()).decode())
 
     # return response
     return {"frames": encoded_frames}
