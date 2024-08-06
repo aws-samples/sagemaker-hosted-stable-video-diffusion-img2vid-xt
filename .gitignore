@@ -251,6 +251,4 @@ csv_data/node_modules/
 
 .vscode/
 
-
-.$async_inference.drawio.bkp
-svd-venv/
+stable-video-diffusion-img2vid-xt-1-1/
