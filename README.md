@@ -26,7 +26,7 @@ The project now includes an interactive Streamlit application to generate the vi
 streamlit run app.py --server.runOnSave true
 ```
 
-![Streamlit App](architecture/stremalit_app.png)
+![Streamlit App](architecture/streamlit_app.png)
 
 ## Wide-format Videos
 
