@@ -48,17 +48,18 @@ def predict_fn(data, pipe):
         with BytesIO(base64.b64decode(image)) as buffered:
             image = Image.open(buffered).copy()
     else:
+        # load image from URL
         image = load_image(image).copy()
 
-    image = image.resize((width, height))
+    image.thumbnail((width, height), Image.Resampling.LANCZOS)
 
     generator = torch.manual_seed(seed)
 
     # invoke model
     frames = pipe(
         image,
-        width=width,
-        height=height,
+        width=image.width,
+        height=image.height,
         num_frames=num_frames,
         num_inference_steps=num_inference_steps,
         min_guidance_scale=min_guidance_scale,
