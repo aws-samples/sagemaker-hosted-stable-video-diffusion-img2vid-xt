@@ -12,23 +12,17 @@ from PIL import Image
 from botocore.exceptions import ClientError
 
 
-# Author: Gary A. Stafford
-# Purpose: Call an Amazon SageMaker Asynchronous Inference endpoint to generate a short video from image using SVD-XT 1.1 image-to-video model
-# Date: 2024-05-13
-# License: MIT License
-
 # Constants
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 # AWS Configuration - *** CHANGE ME! ***
-S3_BUCKET = "sagemaker-us-east-1-676164205626"
-ENDPOINT_NAME = "huggingface-pytorch-inference-2024-05-09-01-03-47-190"
-
-s3_client = boto3.client("s3")
+S3_BUCKET = "sagemaker-us-east-1-CHANGE-ME"
+ENDPOINT_NAME = "huggingface-pytorch-inference-CHANGE-ME"
 
 # Local File Paths
-REQUEST_PAYLOAD = "request_payloads/payload.json"
-RESPONSE_PAYLOAD = "response_payloads/output.json"
+os.makedirs("tmp/request_payloads", exist_ok=True)
+REQUEST_PAYLOAD = "tmp/request_payloads/payload.json"
+RESPONSE_PAYLOAD = "tmp/response_output.json"
 
 
 def main():
@@ -58,6 +52,9 @@ def configure_page():
 
 def reset_session_states():
     session_state_defaults = {
+        "aws_region": "us-east-1",
+        "s3_bucket": S3_BUCKET,
+        "sagemaker_endpoint_name": ENDPOINT_NAME,
         "play_video_disabled": True,
         "invocation_time": 0,
         "movie_title": None,
@@ -86,7 +83,7 @@ def handle_file_upload():
     if uploaded_file:
         if uploaded_file.size > MAX_FILE_SIZE:
             st.error(
-                "The uploaded file is too large. Please upload an image smaller than 5MB."
+                "The uploaded file is too large. Please upload an image smaller than 5 MiB."
             )
         else:
             st.session_state["uploaded_image"] = uploaded_file
@@ -102,8 +99,17 @@ def display_image(image):
 
 
 def display_input_fields():
+    st.session_state["region"] = st.text_input(
+        "AWS Region", value=st.session_state["aws_region"]
+    )
+    st.session_state["s3_bucket"] = st.text_input(
+        "S3 Bucket", value=st.session_state["s3_bucket"]
+    )
+    st.session_state["sagemaker_endpoint_name"] = st.text_input(
+        "SageMaker Endpoint name", value=st.session_state["sagemaker_endpoint_name"]
+    )
     st.session_state["movie_title"] = st.text_input(
-        "Movie Title", value=st.session_state.get("movie_title", "")
+        "Movie Title", value=st.session_state["movie_title"]
     )
     st.session_state["width"] = st.number_input(
         "Width", value=st.session_state["width"]
@@ -142,37 +148,36 @@ def handle_video_creation():
     create_video = st.button("Create Video")
     if create_video:
         with st.spinner("Creating video..."):
-            # try:
-            response_location = invoke_model()
-            if response_location:
-                if get_model_response(response_location):
-                    process_video_frames()
-                    video_path = f"video_out/{st.session_state['movie_title']}.mp4"
-                    convert_frames_to_video(video_path)
-                    st.success(f"Video created: {video_path}")
-            # except Exception as e:
-            #     st.error(f"An error occurred: {e}")
+            response = invoke_model()
+            if get_model_response(response):
+                process_video_frames()
+                video_path = f"video_out/{st.session_state['movie_title']}.mp4"
+                convert_frames_to_video(video_path)
+                st.success(f"Video created: {video_path}")
+
     play_video(f"video_out/{st.session_state['movie_title']}.mp4")
 
 
 def upload_file(file_path):
+    s3_client = boto3.client("s3", region_name=st.session_state.get("aws_region"))
     s3_client.upload_file(
         Filename=file_path,
-        Bucket=S3_BUCKET,
+        Bucket=st.session_state.get("s3_bucket"),
         Key="async_inference/input/payload.json",
         ExtraArgs={"ContentType": "application/json"},
     )
 
 
 def encode_image(image):
-    buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+    with BytesIO() as buffered:
+        image.save(buffered, format="JPEG")
+        return "data:text/plain;base64," + base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 
 def invoke_model():
     image = Image.open(st.session_state["uploaded_image"])
     data = {
+        "movie_title": st.session_state["movie_title"],
         "image": encode_image(image),
         "width": st.session_state["width"],
         "height": st.session_state["height"],
@@ -192,20 +197,29 @@ def invoke_model():
 
     upload_file(REQUEST_PAYLOAD)
 
-    sm_runtime_client = boto3.client("sagemaker-runtime")
+    sm_runtime_client = boto3.client("sagemaker-runtime", region_name=st.session_state["aws_region"])
     response = sm_runtime_client.invoke_endpoint_async(
-        EndpointName=ENDPOINT_NAME,
-        InputLocation=f"s3://{S3_BUCKET}/async_inference/input/payload.json",
+        EndpointName=st.session_state["sagemaker_endpoint_name"],
+        InputLocation=f"s3://{st.session_state['s3_bucket']}/async_inference/input/payload.json",
         InvocationTimeoutSeconds=3600,
     )
 
-    return response.get("OutputLocation")
+    return response
 
 
-def get_model_response(response_location):
-    output_url = urllib.parse.urlparse(response_location)
+def get_model_response(invoke_response):
+    output_location = invoke_response["OutputLocation"]
+    failure_location = invoke_response["FailureLocation"]
+
+    output_url = urllib.parse.urlparse(output_location)
     bucket = output_url.netloc
     key = output_url.path[1:]
+
+    failure_url = urllib.parse.urlparse(failure_location)
+    failure_bucket = failure_url.netloc
+    failure_key = failure_url.path[1:]
+
+    s3_client = boto3.client("s3", region_name=st.session_state["aws_region"])
     while True:
         try:
             s3_client.head_object(Bucket=bucket, Key=key)
@@ -213,8 +227,15 @@ def get_model_response(response_location):
             print("Model response successfully received.")
             return True
         except ClientError as e:
-            if e.response["Error"]["Code"] == "NoSuchKey" or e.response["Error"]["Code"] == "404":
+            if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
                 print("Waiting for model output...")
+                try:
+                    with BytesIO() as data:
+                        s3_client.download_fileobj(Bucket=failure_bucket, Key=failure_key, Fileobj=data)
+                        print("Invocation failed:", data.getvalue())
+                    return False
+                except Exception as e2:
+                    pass
                 time.sleep(15)
                 continue
             raise

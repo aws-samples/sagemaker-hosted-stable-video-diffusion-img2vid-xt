@@ -249,6 +249,8 @@ csv_data/*.class
 csv_data/*.json
 csv_data/node_modules/
 
+*.drawio.bkp
 .vscode/
 deployed_endpoint_name.txt
 stable-video-diffusion-img2vid-xt-1-1/
+tmp/
